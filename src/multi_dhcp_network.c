@@ -311,12 +311,16 @@ int multi_dhcp_create_udp_socket(struct multi_link_info *li) {
     int sock;
     int i = 1;
 
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == -1){ 
         //perror("Could not establish UDP socket");
         MULTI_DEBUG_PRINT_SYSLOG(stderr,"Could not establish UDP socket\n");
         return -1;
     }
+
+    if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &i, sizeof(i)) < 0)
+        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Could not set SO_REUSEADDR on socket %d for "
+                "interface %s (idx %u)\n", sock, li->dev_name, li->ifi_idx);
 
     if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &i, sizeof(i))){
         //perror("Could not set UDP socket to broadcast");
@@ -342,10 +346,6 @@ int multi_dhcp_create_udp_socket(struct multi_link_info *li) {
                 "%s (idx %u) Error: %s\n", li->dev_name, li->ifi_idx, strerror(errno));
         return -1;
     }
-
-    if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &i, sizeof(i)) < 0)
-        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Could not set SO_REUSEADDR on socket %d for "
-                "interface %s (idx %u)\n", sock, li->dev_name, li->ifi_idx);
 
     return sock;
 }
