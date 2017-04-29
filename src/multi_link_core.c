@@ -15,6 +15,7 @@
  */
 
 /* Generic includes */
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -60,8 +61,8 @@ extern struct multi_shared_static_links_list multi_shared_static_links;
 extern int32_t multi_link_dhcp_pipes[2];
 
 //multi_link_netlink
-extern void multi_link_configure_link(struct multi_link_info *li); 
-extern void multi_link_remove_link(struct multi_link_info *li);
+extern void multi_link_configure_link(struct multi_link_info *li, bool metric_only);
+extern void multi_link_remove_link(struct multi_link_info *li, bool metric_only);
 extern void multi_link_remove_ppp(struct multi_link_info *li);
 extern void multi_link_remove_ap(struct multi_link_info *li);
 extern void multi_link_get_iface_info(struct multi_link_info *li);
@@ -250,7 +251,7 @@ static void multi_link_check_link(void *data, void *user_data){
         multi_link_rules_sanity(li);
 
         //TODO: Add error checks!
-        multi_link_configure_link(li);
+        multi_link_configure_link(li, false);
         if(li->state == GOT_IP_STATIC_UP){
             MULTI_DEBUG_PRINT_SYSLOG(stderr, "IP address set for %s (iface idx %u)\n",
                     li->dev_name, li->ifi_idx);
@@ -289,18 +290,18 @@ static void multi_link_check_link(void *data, void *user_data){
 
         /* Delete and then add ip and routes */
         multi_link_notify_probing(probe_pipe, li->ifi_idx, LINK_DOWN);
-        multi_link_remove_link(li);
+        multi_link_remove_link(li, false);
 
         //Configure the new routes
         li->cfg = li->new_cfg;
-        multi_link_configure_link(li);
+        multi_link_configure_link(li, false);
         li->state = LINK_UP;
         multi_link_notify_probing(probe_pipe, li->ifi_idx, LINK_UP);
     } else if (li->state == DHCP_IP_INVALID){
         MULTI_DEBUG_PRINT_SYSLOG(stderr, "Link %s IP is marked as invalid\n", 
                 li->dev_name);
         //Delete information about link
-        multi_link_remove_link(li);
+        multi_link_remove_link(li, false);
 
         //Notify module that link is down (to an application, down and invalid
         //is the same) 
@@ -313,11 +314,30 @@ static void multi_link_check_link(void *data, void *user_data){
         /* Remove routes if link has an IP */
         if(li->cfg.address.s_addr != 0){
             MULTI_DEBUG_PRINT_SYSLOG(stderr, "Remove routes\n");
-            multi_link_remove_link(li);
+            multi_link_remove_link(li, false);
         }
 
         li->state = DELETE_LINK;
         multi_link_notify_probing(probe_pipe, li->ifi_idx, LINK_DOWN);
+    }
+
+    // check if we should apply new routes and rules
+    if (li->wants_routes_and_rules_update) {
+        li->wants_routes_and_rules_update = 0;
+
+        if (li->keep_metric && li->metric != 0) { // sanity check
+            struct multi_link_info_static *li_static = NULL;
+
+            MULTI_DEBUG_PRINT_SYSLOG(stderr, "Will check metric of %s\n", li->dev_name);
+
+            TAILQ_FIND_CUSTOM(li_static, &multi_shared_static_links, list_ptr, li->dev_name, multi_cmp_devname);
+            if (li_static->metric != 0 && li_static->metric != li->metric) {
+                MULTI_DEBUG_PRINT_SYSLOG(stderr, "Metric of %s shall change from %i to %i\n", li->dev_name,
+                  li->metric, li_static->metric);
+                li->metric = li_static->metric;
+                multi_link_configure_link(li, true);
+            }
+        }
     }
 
     pthread_mutex_unlock(&(li->state_lock));
@@ -370,7 +390,7 @@ struct multi_link_info *multi_link_create_new_link(uint8_t* dev_name,
         //ffs starts indexing from 1
         multi_shared_metrics_set ^= 1 << (li->metric - 1);
     }
-    
+
     li->state = WAITING_FOR_DHCP;
     li->ifi_idx = if_nametoindex((char*) dev_name);
     li->write_pipe = multi_link_dhcp_pipes[1];
@@ -392,7 +412,7 @@ static void multi_link_delete_link(struct multi_link_info *li,
             li->ifi_idx, li->metric);
 
     if(li->cfg.address.s_addr != 0)
-        multi_link_remove_link(li);
+        multi_link_remove_link(li, false);
     
     pthread_cancel(li->dhcp_thread);
     pthread_join(li->dhcp_thread, NULL);
@@ -707,6 +727,9 @@ static int32_t multi_link_flush_links(){
     return EXIT_SUCCESS;
 }
 
+// This flag will be set when a signal trigger reloading of the configuration is received
+static uint8_t multi_link_reload_config = 0;
+
 static int32_t multi_link_event_loop(struct multi_config *mc){
     struct multi_link_info *li;
     pthread_attr_t detach_attr;
@@ -813,6 +836,11 @@ static int32_t multi_link_event_loop(struct multi_config *mc){
     tv.tv_usec = 0;
 
     while(1){
+        if (multi_link_reload_config) {
+            multi_link_reload_config = 0; // reset before we access the config file
+            multi_core_update_config();   // this way we won't miss a second request with a new file
+        }
+
         readfds = masterfds;
 
         retval = select(fdmax+1, &readfds, NULL, NULL, &tv);
@@ -857,9 +885,24 @@ static int32_t multi_link_event_loop(struct multi_config *mc){
     }
 }
 
+static void multi_handle_signal(int signal){
+    if(signal == SIGUSR1) {
+       multi_link_reload_config = 1;
+    }
+}
+
 /* TODO: Configuration */
 void* multi_link_module_init(void *arg){
     struct multi_core_sync *mcs = (struct multi_core_sync *) arg;
+    struct sigaction sa;
+
+    /* Set up for handling of SIGUSR1 */
+    sa.sa_handler = &multi_handle_signal;
+    sa.sa_flags = SA_RESTART;
+    sigfillset(&sa.sa_mask);
+    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+        printf("Cannot handle SIGUSR1");
+    }
 
     LIST_INIT(&multi_link_links_2);
     multi_link_num_links = 0;

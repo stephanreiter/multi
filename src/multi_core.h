@@ -43,6 +43,7 @@ struct multi_core_sync{
 
 struct multi_config* multi_core_initialize_config(uint8_t *cfg_file, 
         uint8_t unique);
+void multi_core_update_config();
 int32_t multi_core_send(int32_t sock_fd, uint8_t *buf, int32_t numbytes);
 pthread_t multi_start(struct multi_config *mc);
 #endif

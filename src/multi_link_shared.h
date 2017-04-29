@@ -46,6 +46,10 @@ struct multi_link_info{
     //Set for config entries with the metric set. The metric is assumed to be 
     //persistent
     uint8_t keep_metric; 
+    // Set if routes or rules have been set
+    uint8_t has_routes_and_rules;
+    // Set if routes and rules were just deleted and we are asked to update them
+    uint8_t wants_routes_and_rules_update;
     //Used to instruct DHCP client that the IP should be declined
     int32_t decline_pipe[2]; 
     pthread_t dhcp_thread;

@@ -25,10 +25,10 @@
 #define DEF_RULE_MAX	91032
 
 /* Configure IP + routes + rule */
-void multi_link_configure_link(struct multi_link_info *li);
+void multi_link_configure_link(struct multi_link_info *li, bool metric_only);
 
 /* Remote IP + routes + rule */
-void multi_link_remove_link(struct multi_link_info *li);
+void multi_link_remove_link(struct multi_link_info *li, bool metric_only);
 
 /* Remove the info added automatically by pppd/ifconfig (for ap)  */
 void multi_link_remove_ppp(struct multi_link_info *li);

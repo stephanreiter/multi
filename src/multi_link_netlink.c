@@ -270,13 +270,15 @@ void multi_link_remove_ap(struct multi_link_info *li){
     }
 }
 
-void multi_link_configure_link(struct multi_link_info *li){
-    /* Add IP address. PPP/AP has already set the IP of the interface*/
-    //It is safe to do this twice in case of GOT_IP_STATIC_UP/GOT_IP_STATIC. An
-    //interface can only be assigned the same IP address one time. Error will be
-    //returned the following times.
-    if(li->state != GOT_IP_PPP && li->state != GOT_IP_AP)
-        multi_link_modify_ip(RTM_NEWADDR, NLM_F_CREATE | NLM_F_REPLACE, li);
+void multi_link_configure_link(struct multi_link_info *li, bool metric_only){
+    if (!metric_only) {
+      /* Add IP address. PPP/AP has already set the IP of the interface*/
+      //It is safe to do this twice in case of GOT_IP_STATIC_UP/GOT_IP_STATIC. An
+      //interface can only be assigned the same IP address one time. Error will be
+      //returned the following times.
+      if(li->state != GOT_IP_PPP && li->state != GOT_IP_AP)
+          multi_link_modify_ip(RTM_NEWADDR, NLM_F_CREATE | NLM_F_REPLACE, li);
+    }
 
     //Only set IP when link is only up (not running) */
     if(li->state == GOT_IP_STATIC_UP)
@@ -312,12 +314,14 @@ void multi_link_configure_link(struct multi_link_info *li){
     multi_link_modify_rule(RTM_NEWRULE, NLM_F_CREATE | NLM_F_EXCL, li->metric, 
             li, 0, 0, DEF_RULE_PRIO + li->metric, "lo");
 
+    li->has_routes_and_rules = 1; // we set them
+
     MULTI_DEBUG_PRINT_SYSLOG(stderr, "Done adding rule (iface %s idx %u)\n", 
             li->dev_name, li->ifi_idx);
 }
 
 /* Maybe replace this with a command for flushing */
-void multi_link_remove_link(struct multi_link_info *li){
+void multi_link_remove_link(struct multi_link_info *li, bool metric_only){
     multi_link_modify_rule(RTM_DELRULE, 0, li->metric, li, 32, FRA_SRC,
             ADDR_RULE_PRIO, NULL);
     multi_link_modify_rule(RTM_DELRULE, 0, li->metric, 
@@ -332,11 +336,16 @@ void multi_link_remove_link(struct multi_link_info *li){
     
     multi_link_modify_route(RTM_DELROUTE, 0, li->metric, li, 0);
 
-    /* Delete IP address */
-    if(li->state != GOT_IP_PPP && li->state != LINK_UP_PPP && 
-            li->state != GOT_IP_AP && li->state != LINK_UP_AP && 
-            li->state != LINK_UP_STATIC)
-        multi_link_modify_ip(RTM_DELADDR, 0, li);
+    li->has_routes_and_rules = 0; // they are gone
+    li->wants_routes_and_rules_update = 0; // not anymore, request again if you want to!
+
+    if (!metric_only) {
+        /* Delete IP address */
+        if(li->state != GOT_IP_PPP && li->state != LINK_UP_PPP && 
+                li->state != GOT_IP_AP && li->state != LINK_UP_AP && 
+                li->state != LINK_UP_STATIC)
+            multi_link_modify_ip(RTM_DELADDR, 0, li);
+    }
 
     MULTI_DEBUG_PRINT_SYSLOG(stderr, "Cleaned up after %s (iface idx %u)\n", 
             li->dev_name, li->ifi_idx);
