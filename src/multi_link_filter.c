@@ -310,12 +310,6 @@ int32_t multi_link_filter_iprules(const struct nlmsghdr *nlh, void *data){
         (fra_priority < (DEF_RULE_PRIO + 1) || fra_priority > DEF_RULE_MAX))
         return MNL_CB_OK;
 
-    //The last part of this check is not perfect, but it works for now. Will
-    //break when someone adds a rule with a larger priority
-    if (fra_priority != ADDR_RULE_PRIO && fra_priority != NW_RULE_PRIO &&
-        fra_priority <= DEF_RULE_PRIO)
-        return MNL_CB_OK;
-
     //TODO: Add a check for interface here as well, do our best not to do
     //anything with interfaces that should be ignored?
     MULTI_DEBUG_PRINT_SYSLOG(stderr,  "Added rule with id %u to flush list\n", 
@@ -348,7 +342,8 @@ static uint8_t multi_link_filter_cmp_def_rule(
     //matching metric. We don't need to check for multiple entries with same
     //metric, that is taken care of by the previous check
     while (li_itr != NULL) {
-        if (li_itr->metric == prio)
+        uint32_t li_prio = DEF_RULE_PRIO + li_itr->metric;
+        if (li_prio == prio)
             break;
 
         li_itr = li_itr->next.le_next;
@@ -416,7 +411,7 @@ int32_t multi_link_filter_iprules_addr(const struct nlmsghdr *nlh, void *data)
         (prio < (DEF_RULE_PRIO + 1) || prio > DEF_RULE_MAX))
         return MNL_CB_OK;
 
-    if (prio > (DEF_RULE_PRIO + 1) && prio <= DEF_RULE_MAX)
+    if (prio >= (DEF_RULE_PRIO + 1) && prio <= DEF_RULE_MAX)
         should_delete = multi_link_filter_cmp_def_rule(filter_iprule, prio);
     else
         should_delete = multi_link_filter_cmp_nw_addr_rule(tb, li);
